@@ -1,6 +1,6 @@
 # DeepAries
 
-This repository contains the source code for our paper, which introduces **\modelname**—a novel reinforcement learning framework for dynamic portfolio management. Our framework leverages Transformer-based forecasting to extract complex market signals and adapts rebalancing intervals in response to changing market conditions. It has been evaluated across multiple major markets and has shown superior risk-adjusted returns and lower drawdowns compared to traditional fixed-horizon rebalancing strategies.
+This repository contains the source code for our paper, which introduces DeepAries—a novel reinforcement learning framework for dynamic portfolio management. Our framework leverages Transformer-based forecasting to extract complex market signals and adapts rebalancing intervals in response to changing market conditions. It has been evaluated across multiple major markets and has shown superior risk-adjusted returns and lower drawdowns compared to traditional fixed-horizon rebalancing strategies.
 
 ## Abstract
 
@@ -15,7 +15,6 @@ We propose DeepAries, a novel reinforcement learning framework for portfolio man
 - **Multi-Market Evaluation:** Evaluated on DJ 30, FTSE 100, KOSPI, and CSI 300, demonstrating superior risk-adjusted returns.
 - **Interactive Demo:** Access our live demo at [DeepAries.com](https://DeepAries.com/) for real-time portfolio management insights.
 
-## Directory Structure
 
 
 ## Requirements
