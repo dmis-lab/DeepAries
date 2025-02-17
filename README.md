@@ -1,11 +1,10 @@
 # DeepAries
 
-This repository contains the source code for our paper, which introduces DeepAries—a novel reinforcement learning framework for dynamic portfolio management. Our framework leverages Transformer-based forecasting to extract complex market signals and adapts rebalancing intervals in response to changing market conditions. It has been evaluated across multiple major markets and has shown superior risk-adjusted returns and lower drawdowns compared to traditional fixed-horizon rebalancing strategies.
+This repository contains the source code for our paper, which introduces **DeepAries**—a novel reinforcement learning framework for dynamic portfolio management. Our framework leverages Transformer-based forecasting to extract complex market signals and adapts rebalancing intervals in response to changing market conditions. It has been evaluated across multiple major markets and has shown superior risk-adjusted returns and lower drawdowns compared to traditional fixed-horizon rebalancing strategies.
 
 ## Abstract
 
-
-We propose DeepAries, a novel reinforcement learning framework for portfolio management that dynamically adjusts rebalancing intervals based on prevailing market conditions. Unlike conventional fixed-horizon strategies, DeepAries leverages Transformer-based forecasting to extract complex market signals and employs an adaptive interval selection mechanism—choosing among representative horizons (1, 5, and 20 days)—to balance return pursuit against transaction cost mitigation. Extensive experiments across four major markets (DJ 30, FTSE 100, KOSPI, and CSI 300) demonstrate that our approach achieves superior risk-adjusted returns and lower drawdowns compared to fixed-frequency rebalancing. Furthermore, an interactive demo evaluation on real market data (September 2024 to January 2025) illustrates the practical benefits of adaptive rebalancing in providing timely portfolio updates and empowering investors with more informed decision-making. Overall, DeepAries offers a promising tool for modern, dynamic portfolio management. To enhance accessibility and reproducibility, we provide a live demo of DeepaReis at https://DeepAries.com/
+We propose DeepAries, a novel reinforcement learning framework for portfolio management that dynamically adjusts rebalancing intervals based on prevailing market conditions. Unlike conventional fixed-horizon strategies, DeepAries leverages Transformer-based forecasting to extract complex market signals and employs an adaptive interval selection mechanism—choosing among representative horizons (1, 5, and 20 days)—to balance return pursuit against transaction cost mitigation. Extensive experiments across four major markets (DJ 30, FTSE 100, KOSPI, and CSI 300) demonstrate that our approach achieves superior risk-adjusted returns and lower drawdowns compared to fixed-frequency rebalancing. Furthermore, an interactive demo evaluation on real market data (September 2024 to January 2025) illustrates the practical benefits of adaptive rebalancing in providing timely portfolio updates and empowering investors with more informed decision-making. Overall, DeepAries offers a promising tool for modern, dynamic portfolio management. To enhance accessibility and reproducibility, we provide a live demo of DeepAries at [DeepAries.com](https://DeepAries.com/).
 
 ## Features
 
@@ -15,22 +14,36 @@ We propose DeepAries, a novel reinforcement learning framework for portfolio man
 - **Multi-Market Evaluation:** Evaluated on DJ 30, FTSE 100, KOSPI, and CSI 300, demonstrating superior risk-adjusted returns.
 - **Interactive Demo:** Access our live demo at [DeepAries.com](https://DeepAries.com/) for real-time portfolio management insights.
 
+## Usage
 
+1. **Install dependencies.**  
+   Ensure you have:
+   - `pandas==1.5.3`
+   - `torch==1.11.0`  
+   (Other required packages are listed in `requirements.txt`.)
 
-## Requirements
+2. **Download and unpack the data.**  
+   The public dataset is built using data obtained via [yfinance](https://pypi.org/project/yfinance/). Download the data and unpack it into the `data/` directory.
 
-Ensure you have Python 3.7+ installed. The following packages are required:
+3. **Run `main.py`.**  
+   Select the desired dataset for training and evaluation.
 
-- torch
-- numpy
-- pandas
-- matplotlib
-- scikit-learn
-- yfinance
+4. **Pre-trained Models.**  
+   We provide models trained on the original dataset as well as on open-source data.
 
-You can install the dependencies with:
+## Dataset
 
-```bash
-pip install -r requirements.txt
+### Form
 
-This `README.md` file starts with a brief project overview, followed by the paper abstract, and then details the repository structure, requirements, setup, usage, and additional information. Adjust any sections as needed to fit your project specifics.
+The dataset is constructed using publicly available data from Yahoo Finance (yfinance). Data for various markets is downloaded, and stocks are grouped by prediction dates to form the training, validation, and test sets. Each data sample is of shape **(N, F)**, where:
+
+- **N** - The number of stocks. This can include stocks from any market (e.g., DJ 30, FTSE 100, KOSPI, CSI 300, etc.).
+- **F** - The number of features per stock. In our paper, we obtain features from yfinance and apply normalization for consistency and robustness.
+
+You can inspect the data format using the following code snippet:
+```python
+import pickle
+
+with open('data/original/sample_dl_train.pkl', 'rb') as f:
+    dl_train = pickle.load(f)
+    print(dl_train.data)  # A pandas DataFrame containing datetime, instrument, and feature columns
