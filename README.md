@@ -75,7 +75,7 @@ with open('data/original/sample_dl_train.pkl', 'rb') as f:
    <tr>
 		<td>Donghee Choi*</td>		
 		<td>Department of Metabolism, Digestion and Reproduction,<br>Imperial College London, London, United Kingdom</td>
-		<td>gimmogan@hufs.ac.kr</td>
+		<td>donghee.choi@imperial.ac.uk</td>
 	</tr>
 	<tr>
 		<td>Jaewoo Kang*</td>		
