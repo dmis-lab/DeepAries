@@ -47,3 +47,41 @@ import pickle
 with open('data/original/sample_dl_train.pkl', 'rb') as f:
     dl_train = pickle.load(f)
     print(dl_train.data)  # A pandas DataFrame containing datetime, instrument, and feature columns
+```
+
+## Contributors
+
+<table>
+	<tr>
+		<th>Name</th>		
+		<th>Affiliation</th>
+		<th>Email</th>
+	</tr>
+	<tr>
+		<td>Jinkyu Kim</td>		
+		<td>Data Mining and Information Systems Lab,<br>Korea University, Seoul, South Korea</td>
+		<td>no100kill@korea.ac.kr</td>
+	</tr>
+	<tr>
+		<td>Hyunjung Yi</td>		
+		<td>Data Mining and Information Systems Lab,<br>Korea University, Seoul, South Korea</td>
+		<td>ruby3672@korea.ac.kr</td>
+	</tr>
+	<tr>
+		<td>Mogan Gim</td>		
+		<td>Department of Biomedical Engineering,<br>Hankuk University of Foreign Studies, Yongin, South Korea</td>
+		<td>gimmogan@hufs.ac.kr</td>
+	</tr>
+   <tr>
+		<td>Donghee Choi*</td>		
+		<td>Department of Metabolism, Digestion and Reproduction,<br>Imperial College London, London, United Kingdom</td>
+		<td>gimmogan@hufs.ac.kr</td>
+	</tr>
+	<tr>
+		<td>Jaewoo Kang*</td>		
+		<td>Data Mining and Information Systems Lab,<br>Korea University, Seoul, South Korea</td>
+		<td>kangj@korea.ac.kr</td>
+	</tr>
+</table>
+
+- &ast;: *Corresponding Author*
