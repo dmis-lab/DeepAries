@@ -9,98 +9,176 @@ import torch.nn as nn
 from torch import optim
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
-from models import Transformer, moe, ppo, ada_ppo, tradingenv, Informer, Reformer, Autoformer, Fedformer, Flowformer, Flashformer, itransformer
-from utils.tools import EarlyStopping, adjust_learning_rate, visual, port_visual
-from utils.metrics import metric
-from utils.backtest import *
-from itertools import tee
-import gc
+from models import ppo, iTransformer
+from utils.tools import EarlyStopping, adjust_learning_rate
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import gc
 
 warnings.filterwarnings('ignore')
 
 
-def get_sample(dataset, index, device):
+class TradingEnvironment:
     """
-    Retrieve a sample from the dataset and convert it to torch tensors.
+    Trading environment for dynamic portfolio management.
+    Supports both simple and complex fee structures.
     """
-    sample = dataset[index]  # Calls __getitem__
-    (batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true) = sample
-    return (
-        torch.tensor(batch_x, dtype=torch.float).to(device),
-        torch.tensor(batch_y, dtype=torch.float).to(device),
-        torch.tensor(batch_x_mark, dtype=torch.float).to(device),
-        torch.tensor(batch_y_mark, dtype=torch.float).to(device),
-        torch.tensor(ground_true, dtype=torch.float).to(device)
-    )
+    def __init__(self, args):
+        self.args = args
+        self.initial_amount = 1.0
+        self.seq_len = self.args.seq_len
+        self.fee_rate = self.args.fee_rate
+        # For complex fee structure, sell fee (cs) is doubled.
+        if args.complex_fee:
+            self.cs = self.fee_rate * 2
+            self.cp = self.fee_rate
+        self.n_assets = self.args.num_stocks
+        self.w_old = np.zeros(self.args.total_stocks)
+        self.a0_old = 1.0
+        self.portfolio_value = self.initial_amount
+        self.asset_memory = [self.initial_amount]
+        self.portfolio_return_memory = [0]
+        self.weights_memory = [self.w_old]
+        self.transaction_cost_memory = []
+        self.rollout = []
+        self.rollout_len = 30
+
+    def reset(self):
+        """Reset the environment to initial conditions."""
+        self.rollout = []
+        self.w_old = np.zeros(self.args.total_stocks)
+        self.a0_old = 1.0
+        self.portfolio_value = self.initial_amount
+        self.asset_memory = [self.initial_amount]
+        self.portfolio_return_memory = [0]
+        self.weights_memory = [self.w_old]
+        self.transaction_cost_memory = []
+
+    def normalization(self, actions):
+        """Normalize an action vector so that its elements sum to 1."""
+        s = np.sum(actions, axis=-1, keepdims=True)
+        return actions / s
+
+    def compute_mu_t(self, w_old, a_target, a0_old, cs, cp, max_iter=50, tol=1e-6):
+        """
+        Compute the scaling factor mu based on Jiang et al. (2017).
+        Returns mu such that the new risk-asset allocation is mu * a_target.
+        """
+        mu = 1.0
+        for _ in range(max_iter):
+            sum_sell = 0.0
+            for i in range(len(w_old)):
+                diff = w_old[i] - mu * a_target[i]
+                if diff > 0:
+                    sum_sell += diff
+            bracket = 1.0 - cp * a0_old - (cs + cp - cs * cp) * sum_sell
+            denom = 1.0 - cp * a0_old
+            mu_new = 0.0 if abs(denom) < 1e-12 else bracket / denom
+            if abs(mu_new - mu) < tol:
+                mu = mu_new
+                break
+            mu = mu_new
+        return max(mu, 0.0)
+
+    def get_sample(self, dataset, index, device):
+        """
+        Retrieve a sample from the dataset and convert it to torch tensors.
+        """
+        sample = dataset[index]
+        (batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true) = sample
+        return (torch.tensor(batch_x, dtype=torch.float).to(device),
+                torch.tensor(batch_y, dtype=torch.float).to(device),
+                torch.tensor(batch_x_mark, dtype=torch.float).to(device),
+                torch.tensor(batch_y_mark, dtype=torch.float).to(device),
+                torch.tensor(ground_true, dtype=torch.float).to(device))
+
+    def step(self, weights, returns):
+        """
+        Execute one step in the environment using the provided weights and asset returns.
+        For complex fee structure, adjust weights using mu-scaling; otherwise, update based on returns.
+        Returns the one-step reward.
+        """
+        if isinstance(weights, torch.Tensor):
+            weights = weights.detach().cpu().numpy()
+        if isinstance(returns, torch.Tensor):
+            returns = returns.detach().cpu().numpy()
+        if self.args.complex_fee:
+            mu = self.compute_mu_t(self.w_old, weights, self.a0_old, self.cs, self.cp, max_iter=100)
+            w_new = mu * weights
+            sum_wnew = np.sum(w_new)
+            a0_new = max(1.0 - sum_wnew, 0.0)
+            portfolio_return = np.sum(w_new * returns)
+            new_pf_value = self.portfolio_value * (1 + portfolio_return)
+            reward = (new_pf_value - self.portfolio_value) / self.portfolio_value
+            self.portfolio_value = new_pf_value
+            self.w_old = w_new
+            self.a0_old = a0_new
+            self.weights_memory.append((a0_new, w_new))
+            self.portfolio_return_memory.append(portfolio_return)
+            self.asset_memory.append(new_pf_value)
+            return reward
+        else:
+            self.weights_memory.append(weights)
+            portfolio_return = np.sum(weights * returns)
+            change_ratio = returns + 1
+            weights_new = self.normalization(weights * change_ratio)
+            weights_old = self.weights_memory[-3] if len(self.weights_memory) >= 3 else weights
+            diff_weights = np.sum(np.abs(weights_old - weights_new), axis=-1)
+            transaction_fee = diff_weights * self.fee_rate * self.portfolio_value
+            new_pf_value = (self.portfolio_value - transaction_fee) * (1 + portfolio_return)
+            portfolio_return = (new_pf_value - self.portfolio_value) / self.portfolio_value
+            reward = portfolio_return
+            self.portfolio_value = new_pf_value
+            self.portfolio_return_memory.append(portfolio_return)
+            self.asset_memory.append(new_pf_value)
+            return reward
 
 
 class Exp_DeepAries(Exp_Basic):
     """
-    Exp_DeepAries implements the DeepAries experiment: a reinforcement learning
-    framework for dynamic portfolio management using a Transformer-based backbone and PPO updates.
+    Implements the DeepAries experiment using a PPO-based reinforcement learning framework
+    for dynamic portfolio management.
     """
     def __init__(self, args, setting):
         super(Exp_DeepAries, self).__init__(args, setting)
         self.setting = setting
-        # Load a pretrained ADA_PPO model; its parameters are frozen.
-        self.old_model = ada_ppo.ADA_PPO(args.model, args, setting, deterministic=False).to(self.device)
+        self.old_model = ppo.ADA_PPO(args.model, args, setting, deterministic=False).to(self.device)
         for param in self.old_model.parameters():
             param.requires_grad = False
-
         self.horizons = args.horizons
         self.temperature = args.temperature
-        self.env = tradingenv.TradingEnvironment(self.args)
-        self.buffer_size = 1  # Rollout buffer size
+        self.env = TradingEnvironment(self.args)
+        self.buffer_size = 1
         self.ent_coef = 0.01
         self.gamma = 0.99
         self.lmbda = 0.95
         self.eps_clip = 0.1
         self.beta = 0.1
         self.data = []
-        self.max_clip = 5  # Clipping range for log probability ratio
+        self.max_clip = 5
         self.min_clip = -5
 
     def _build_model(self):
-        """
-        Build the ADA_PPO model. If using multiple GPUs, wrap the model in DataParallel.
-        """
-        model = ada_ppo.ADA_PPO(self.args.model, self.args, self.setting, deterministic=False)
+        model = ppo.ADA_PPO(self.args.model, self.args, self.setting, deterministic=False)
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.device_ids)
         return model
 
     def put_data(self, item):
-        """
-        Append rollout data to the buffer.
-        """
         self.data.append(item)
 
     def _get_data(self, flag):
-        """
-        Retrieve the dataset and dataloader for the specified flag.
-        """
         data_set, data_loader = data_provider(self.args, flag)
         return data_set, data_loader
 
     def _select_optimizer(self):
-        """
-        Select the Adam optimizer for trainable parameters.
-        """
         trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
         return optim.Adam(trainable_params, lr=self.args.learning_rate)
 
     def _select_criterion(self):
-        """
-        Select MSELoss as the training criterion.
-        """
         return nn.MSELoss()
 
     def train(self, setting):
-        """
-        Train the DeepAries model using PPO-based reinforcement learning.
-        """
         train_dataset, _ = self._get_data(flag='train')
         n_data = len(train_dataset)
         path = os.path.join(self.args.checkpoints, setting)
@@ -116,20 +194,18 @@ class Exp_DeepAries(Exp_Basic):
             self.logger.info(f"[Train] Epoch {epoch + 1}/{self.args.train_epochs}")
             self.model.train()
             self.env.reset()
-
             i = 0
             epoch_loss = []
             epoch_time = time.time()
 
             while i < n_data:
-                batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = get_sample(train_dataset, i, self.device)
-                # Prepare decoder input with zero padding for prediction part
+                batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = \
+                    self.env.get_sample(train_dataset, i, self.device)
                 dec_zeros = torch.zeros_like(batch_y[:, -self.args.pred_len:, :])
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_zeros], dim=1)
                 scores, log_prob, entropy, selected_period_indices = self.old_model.pi(
                     batch_x, batch_x_mark, dec_inp, batch_y_mark
                 )
-                # Select top stocks based on scores
                 top_indices = torch.topk(scores, self.args.num_stocks, dim=0).indices
                 selected_scores = scores[top_indices]
                 topk_weights = torch.softmax(selected_scores / self.temperature, dim=0)
@@ -137,7 +213,6 @@ class Exp_DeepAries(Exp_Basic):
                 final_weights[top_indices] = topk_weights
                 returns = ground_true[:, selected_period_indices]
 
-                # Calculate simulated returns for each horizon
                 simulated_returns = torch.tensor(
                     [(final_weights * ground_true[:, i]).sum() for i in range(len(self.horizons))],
                     device=ground_true.device
@@ -154,7 +229,7 @@ class Exp_DeepAries(Exp_Basic):
                 next_i = i + chosen_horizon
                 done = (next_i >= n_data - 1)
                 if not done:
-                    next_sample = get_sample(train_dataset, next_i, self.device)
+                    next_sample = self.env.get_sample(train_dataset, next_i, self.device)
                     next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark, _ = next_sample
                 else:
                     next_batch_x = torch.zeros_like(batch_x)
@@ -163,21 +238,19 @@ class Exp_DeepAries(Exp_Basic):
                     next_batch_y_mark = torch.zeros_like(batch_y_mark)
 
                 transition = (
-                    batch_x, batch_y, batch_x_mark, batch_y_mark,  # current state
+                    batch_x, batch_y, batch_x_mark, batch_y_mark,
                     scores.detach(), reward,
-                    next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark,  # next state
+                    next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark,
                     log_prob.detach(),
                     done,
                     returns,
                 )
                 self.env.rollout.append(transition)
-
                 i = next_i
                 if len(self.env.rollout) >= self.env.rollout_len:
                     self.put_data(self.env.rollout)
                     self.env.rollout = []
                     loss_val = self.train_net(K_epoch=1, model_optim=model_optim)
-                    # Update the old model with the current model weights
                     self.old_model.load_state_dict(self.model.state_dict())
                     if loss_val is not None:
                         epoch_loss.append(loss_val)
@@ -189,16 +262,6 @@ class Exp_DeepAries(Exp_Basic):
                 f"[Epoch {epoch + 1}] TrainLoss={avg_train_loss:.4f}, "
                 f"ValiLoss={vali_loss:.4f}, TestLoss={test_loss:.4f}"
             )
-            self.wandb.log({
-                "Train Loss": avg_train_loss,
-                "Validation Loss": vali_loss,
-                "Validation Reward": vali_reward,
-                "Test Loss": test_loss,
-                "Test Reward": test_reward,
-                "Epoch": epoch
-            })
-
-            # Early stopping based on validation loss
             early_stopping(vali_loss, self.model, path)
             if early_stopping.early_stop:
                 self.logger.info("Early stopped!")
@@ -206,29 +269,20 @@ class Exp_DeepAries(Exp_Basic):
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
-        # Load the best model checkpoint after training
         best_path = os.path.join(path, 'checkpoint.pth')
         self.model.load_state_dict(torch.load(best_path))
         self.logger.info("Training completed, best model loaded.")
 
     def vali(self):
-        """
-        Evaluate the model on the validation and test datasets.
-        """
         vali_dataset, _ = self._get_data('val')
         v_loss, v_reward = self._evaluate_dataset(vali_dataset)
-
         test_dataset, _ = self._get_data('test')
         t_loss, t_reward = self._evaluate_dataset(test_dataset)
-
         return v_loss, v_reward, t_loss, t_reward
 
     def _evaluate_dataset(self, dataset):
-        """
-        Compute evaluation metrics (loss and total reward) on the given dataset.
-        """
         self.model.eval()
-        env_temp = tradingenv.TradingEnvironment(self.args)
+        env_temp = TradingEnvironment(self.args)
         env_temp.reset()
         total_loss, total_value_loss, total_pred_loss = 0.0, 0.0, 0.0
         n_data = len(dataset)
@@ -236,10 +290,10 @@ class Exp_DeepAries(Exp_Basic):
         total_reward = 0.0
 
         while i < n_data:
-            batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = get_sample(dataset, i, self.device)
+            batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = \
+                self.env.get_sample(dataset, i, self.device)
             dec_zeros = torch.zeros_like(batch_y[:, -self.args.pred_len:, :])
             dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_zeros], dim=1)
-
             with torch.no_grad():
                 scores, log_prob, entropy, selected_period_indices = self.model.pi(
                     batch_x, batch_x_mark, dec_inp, batch_y_mark
@@ -253,10 +307,9 @@ class Exp_DeepAries(Exp_Basic):
                 reward = env_temp.step(final_weights, returns)
                 chosen_horizon = self.horizons[selected_period_indices]
                 i += chosen_horizon
-                done = (i >= n_data - 1)
                 total_reward += reward
-                if not done:
-                    next_sample = get_sample(dataset, i, self.device)
+                if i < n_data:
+                    next_sample = self.env.get_sample(dataset, i, self.device)
                     next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark, _ = next_sample
                 else:
                     next_batch_x = torch.zeros_like(batch_x)
@@ -265,7 +318,7 @@ class Exp_DeepAries(Exp_Basic):
                     next_batch_y_mark = torch.zeros_like(batch_y_mark)
                 value = self.model.value(batch_x, batch_x_mark, batch_y, batch_y_mark)
                 next_value = self.model.value(next_batch_x, next_batch_x_mark, next_batch_y, next_batch_y_mark)
-                td_target = reward + self.gamma * next_value * (0 if done else 1)
+                td_target = reward + self.gamma * next_value * (0 if i >= n_data - 1 else 1)
                 value_loss = F.smooth_l1_loss(value, td_target)
                 pred_loss = F.smooth_l1_loss(scores, returns)
                 loss = value_loss + self.beta * pred_loss
@@ -278,13 +331,10 @@ class Exp_DeepAries(Exp_Basic):
             f"[Validation] Total Reward={total_reward:.4f}, Total Loss={avg_loss:.4f}, "
             f"Value Loss={total_value_loss:.4f}, Pred Loss={total_pred_loss:.4f}"
         )
-        self.model.train()  # Reset model to training mode
+        self.model.train()
         return avg_loss, total_reward
 
     def backtest(self, setting, load=False):
-        """
-        Backtest the trained DeepAries model using reinforcement learning principles.
-        """
         if load:
             best_path = os.path.join(self.args.checkpoints, setting, 'checkpoint.pth')
             self.model.load_state_dict(torch.load(best_path))
@@ -293,21 +343,21 @@ class Exp_DeepAries(Exp_Basic):
         backtest_dataset, _ = self._get_data('backtest')
         n_data = len(backtest_dataset)
         self.model.eval()
-
-        env_test = tradingenv.TradingEnvironment(self.args)
+        env_test = TradingEnvironment(self.args)
         env_test.reset()
-
         portfolio_values = [1.0]
         portfolio_dates = [backtest_dataset.unique_dates[0]]
         i = 0
         while i < n_data:
-            batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = get_sample(backtest_dataset, i, self.device)
+            batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = \
+                self.env.get_sample(backtest_dataset, i, self.device)
             dec_zeros = torch.zeros_like(batch_y[:, -self.args.pred_len:, :])
             dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_zeros], dim=1)
             with torch.no_grad():
                 scores, log_prob, entropy, selected_period_indices = self.model.pi(
                     batch_x, batch_x_mark, dec_inp, batch_y_mark
                 )
+            # Retrieve current date from the dataset based on sequence length
             current_date = backtest_dataset.unique_dates[i + self.args.seq_len]
             top_indices = torch.topk(scores, self.args.num_stocks, dim=0).indices
             selected_scores = scores[top_indices]
@@ -323,44 +373,34 @@ class Exp_DeepAries(Exp_Basic):
 
         final_pf = env_test.portfolio_value
         self.logger.info(f"[BackTest] Final Portfolio Value = {final_pf:.4f}")
-        self.wandb.log({"BackTest Final Portfolio Value": final_pf})
-        start_date = backtest_dataset.unique_dates[0]
-        end_date = backtest_dataset.unique_dates[-1]
 
-        csv_path = os.path.join(self.args.root_path, self.args.data_path)
-        raw_data = pd.read_csv(csv_path)
-        raw_data['date'] = pd.to_datetime(raw_data['date']).dt.tz_localize(None)
-        index_name = self._get_market_index_name()
-        index_data = fetch_index_data(index_name, start_date, end_date)
-        folder_path = os.path.join('./results', setting)
-        os.makedirs(folder_path, exist_ok=True)
+        # Compute portfolio metrics
+        initial_pf = portfolio_values[0]
+        total_return = (final_pf - initial_pf) / initial_pf
 
-        metrics = run_backtest(
-            data=raw_data,
-            index_data=index_data,
-            start_date=start_date,
-            end_date=end_date,
-            fee_rate=self.args.fee_rate,
-            external_portfolio=np.array(portfolio_values),
-            external_dates=pd.to_datetime(portfolio_dates),
-            pred_len=self.args.pred_len,
-            total_periods=len(backtest_dataset.unique_dates),
-            folder_path=folder_path
-        )
-        strategy_columns = ["External Portfolio"]
-        log_data = {}
-        for i, metric_name in enumerate(metrics["Metric"]):
-            for strategy in strategy_columns:
-                value = metrics[strategy][i]
-                log_data[f"test/{strategy}/{metric_name}"] = value
+        # Convert portfolio_dates to pandas Timestamps (if not already)
+        dates = pd.to_datetime(portfolio_dates)
+        days = (dates[-1] - dates[0]).days
+        annualized_return = (final_pf ** (365 / days) - 1) if days > 0 else 0.0
 
-        self.wandb.log(log_data)
+        # Calculate maximum drawdown
+        cummax = np.maximum.accumulate(portfolio_values)
+        drawdowns = (np.array(portfolio_values) - cummax) / cummax
+        max_drawdown = drawdowns.min()
+
+        # Log and print portfolio performance metrics
+        self.logger.info(f"Total Return: {total_return * 100:.2f}%")
+        self.logger.info(f"Annualized Return: {annualized_return * 100:.2f}%")
+        self.logger.info(f"Maximum Drawdown: {max_drawdown * 100:.2f}%")
+
+        print(f"Final Portfolio Value: {final_pf:.4f}")
+        print(f"Total Return: {total_return * 100:.2f}%")
+        print(f"Annualized Return: {annualized_return * 100:.2f}%")
+        print(f"Maximum Drawdown: {max_drawdown * 100:.2f}%")
+
         return final_pf
 
     def make_batch(self):
-        """
-        Convert rollout data into mini-batches.
-        """
         batch_data = {
             "batch_x": [],
             "batch_y": [],
@@ -376,7 +416,6 @@ class Exp_DeepAries(Exp_Basic):
             "done": [],
             "return_data": []
         }
-
         for _ in range(self.buffer_size):
             rollout = self.data.pop(0)
             for transition in rollout:
@@ -396,7 +435,6 @@ class Exp_DeepAries(Exp_Basic):
                 done_mask = 0 if done else 1
                 batch_data["done"].append([done_mask])
                 batch_data["return_data"].append(return_data)
-
         for key in batch_data:
             try:
                 if key in ["reward", "done"]:
@@ -405,7 +443,6 @@ class Exp_DeepAries(Exp_Basic):
                     batch_data[key] = torch.stack(batch_data[key], dim=0).to(self.device)
             except Exception as e:
                 print(f"Error processing key {key}: {e}")
-
         mini_batches = []
         for i in range(len(batch_data["batch_x"])):
             mini_batches.append((
@@ -426,15 +463,11 @@ class Exp_DeepAries(Exp_Basic):
         return mini_batches
 
     def calc_advantage(self, data):
-        """
-        Calculate advantage values and TD targets for PPO.
-        """
         data_with_adv = []
         td_target_lst = []
         delta_lst = []
         for i, transition in enumerate(data):
             batch_x, batch_y, batch_x_mark, batch_y_mark, scores, reward, next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark, done_mask, old_log_prob, return_data = transition
-
             with torch.no_grad():
                 v_s_next = self.model.value(next_batch_x, next_batch_x_mark, next_batch_y, next_batch_y_mark)
                 v_s = self.model.value(batch_x, batch_x_mark, batch_y, batch_y_mark)
@@ -448,21 +481,15 @@ class Exp_DeepAries(Exp_Basic):
             running_adv = self.gamma * self.lmbda * running_adv + delta_t
             advantage_lst.append(running_adv)
         advantage_lst.reverse()
-
         advantage_tensor = torch.tensor(advantage_lst, dtype=torch.float, device=self.device)
-        advantage_mean = advantage_tensor.mean()
-        advantage_std = advantage_tensor.std() + 1e-8
-        advantage_tensor = (advantage_tensor - advantage_mean) / advantage_std
-
+        advantage_tensor = (advantage_tensor - advantage_tensor.mean()) / (advantage_tensor.std() + 1e-8)
         for i, transition in enumerate(data):
             (batch_x, batch_y, batch_x_mark, batch_y_mark,
              scores, reward,
              next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark,
              done_mask, old_log_prob, return_data) = transition
-
             td_target_tensor = torch.tensor(td_target_lst[i], dtype=torch.float, device=self.device)
             adv_val = advantage_tensor[i]
-
             data_with_adv.append((
                 batch_x, batch_y, batch_x_mark, batch_y_mark,
                 scores, reward,
@@ -471,29 +498,22 @@ class Exp_DeepAries(Exp_Basic):
                 td_target_tensor, adv_val,
                 return_data
             ))
-
         return data_with_adv
 
     def train_net(self, K_epoch=10, model_optim=None):
-        """
-        Perform PPO network updates over multiple epochs.
-        """
         if len(self.data) == self.buffer_size:
             data = self.make_batch()
             data = self.calc_advantage(data)
             losses = 0.0
-
             for _ in range(K_epoch):
                 for mini_batch in data:
                     (batch_x, batch_y, batch_x_mark, batch_y_mark, scores, reward,
                      next_batch_x, next_batch_y, next_batch_x_mark, next_batch_y_mark,
                      done_mask, old_log_prob, td_target, advantage, return_data) = mini_batch
-
                     scores, log_prob, total_entropy, _ = self.model.pi(batch_x, batch_x_mark, batch_y, batch_y_mark)
                     ratio = torch.exp(torch.clamp(log_prob - old_log_prob, min=self.min_clip, max=self.max_clip))
                     surr1 = ratio * advantage
                     surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage
-
                     entropy_mean = total_entropy
                     pred_loss = F.smooth_l1_loss(self.model.pred(batch_x, batch_x_mark, batch_y, batch_y_mark), return_data)
                     policy_loss = -torch.min(surr1, surr2)
@@ -507,9 +527,6 @@ class Exp_DeepAries(Exp_Basic):
             return losses
 
     def _get_market_index_name(self):
-        """
-        Return the market index name based on the selected market.
-        """
         market_indices = {
             'kospi': '^KS11',
             'dj30': '^DJI',
@@ -524,21 +541,14 @@ class Exp_DeepAries(Exp_Basic):
         return index_name
 
     def simulate_episode(self):
-        """
-        Simulate a single episode in the reinforcement learning environment.
-
-        Returns:
-            total_reward (float): Total accumulated reward over the episode.
-        """
         self.env.reset()
         done = False
         total_reward = 0.0
         dataset, _ = self._get_data('train')
         i = 0
         n_data = len(dataset)
-
         while not done and i < n_data:
-            batch = get_sample(dataset, i, self.device)
+            batch = self.env.get_sample(dataset, i, self.device)
             batch_x, batch_y, batch_x_mark, batch_y_mark, ground_true = batch
             dec_zeros = torch.zeros_like(batch_y[:, -self.args.pred_len:, :])
             dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_zeros], dim=1)
@@ -558,5 +568,4 @@ class Exp_DeepAries(Exp_Basic):
             i += chosen_horizon
             if i >= n_data - 1:
                 done = True
-
         return total_reward

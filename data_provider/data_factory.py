@@ -36,6 +36,7 @@ def data_provider(args, flag):
     dataset = TimeSeriesDataset(
         root_path=args.root_path,
         data_path=args.data_path,
+        data=args.data,
         flag=flag,
         valid_year=args.valid_year,
         test_year=args.test_year,

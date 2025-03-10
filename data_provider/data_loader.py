@@ -37,6 +37,7 @@ class TimeSeriesDataset(Dataset):
     def __init__(self,
                  root_path,
                  data_path,
+                 data,
                  flag='train',
                  valid_year=2020,
                  test_year=2021,
@@ -65,6 +66,7 @@ class TimeSeriesDataset(Dataset):
         self.freq = freq
         self.root_path = root_path
         self.data_path = data_path
+        self.data = data
 
         self.step_size = step_size if step_size is not None else self.pred_len
         self.use_step_sampling = use_step_sampling
@@ -74,16 +76,21 @@ class TimeSeriesDataset(Dataset):
             self.__build_indexes__()
 
     def __read_data__(self):
-        df_raw = pd.read_csv(os.path.join(self.root_path, self.data_path))
+        market = os.path.basename(os.path.normpath(self.root_path))
+        # Construct the file path: data/{market}_{data}_data.csv
+        file_path = os.path.join("data", market, f"{market}_{self.data}_data.csv")
+        df_raw = pd.read_csv(file_path)
         df_raw.fillna(0, inplace=True)
         df_raw['date'] = pd.to_datetime(df_raw['date']).dt.tz_localize(None)
         df_raw = df_raw.set_index(['date', 'tic']).sort_index()
 
-        # Split data by year
-        df_train = df_raw[df_raw.index.get_level_values('date').year < self.valid_year]
-        df_val = df_raw[(df_raw.index.get_level_values('date').year >= self.valid_year) &
-                        (df_raw.index.get_level_values('date').year < self.test_year)]
-        df_test = df_raw[df_raw.index.get_level_values('date').year >= self.test_year]
+        # # Split data by year
+        df_train = df_raw[df_raw.index.get_level_values('date') < self.valid_year]
+        df_val = df_raw[
+            (df_raw.index.get_level_values('date') >= self.valid_year) &
+            (df_raw.index.get_level_values('date') < self.test_year)
+            ]
+        df_test = df_raw[df_raw.index.get_level_values('date') >= self.test_year]
 
         if self.flag == 'train':
             df_split = df_train

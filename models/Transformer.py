@@ -67,7 +67,7 @@ class Model(nn.Module):
         dec_out = self.dec_embedding(x_dec, x_mark_dec)
         dec_out = self.decoder(dec_out, enc_out, x_mask=dec_self_mask, cross_mask=dec_enc_mask)
 
-        if self.configs.moe_train:
+        if self.configs.use_adappo:
             return dec_out
         else:
             dec_out = self.Temporal(dec_out)  # [B, out_len, d_model]

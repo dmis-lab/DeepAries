@@ -25,15 +25,6 @@ class ADA_PPO(nn.Module):
             'iTransformer': iTransformer
         }
         self.model = self.model_dict[model_name].Model(configs)
-
-        # Transfer learning settings: load pre-trained weights and freeze parameters if specified.
-        if configs.transfer:
-            checkpoint_path = os.path.join('./checkpoints', setting, 'checkpoint.pth')
-            self.model.load_state_dict(torch.load(checkpoint_path))
-            if configs.freeze:
-                for param in self.model.parameters():
-                    param.requires_grad = False
-
         self.d_model = configs.d_model
         self.pred_len = configs.pred_len
         self.c_out = configs.c_out
