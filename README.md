@@ -18,38 +18,37 @@ We propose DeepAries, a novel reinforcement learning framework for portfolio man
 
 ## Usage
 
-1. **Install dependencies.**  
-   Ensure you have:
-   - `pandas==1.5.3`
-   - `torch==1.11.0`  
-   (Other required packages are listed in `requirements.txt`.)
+1. **Install Dependencies.**  
+   This project requires several Python packages to run. All required packages are listed in the provided `requirements.txt` file.  
+   To install these packages, create and activate a virtual environment, then run:
+   
+       pip install -r requirements.txt
 
-2. **Download and unpack the data.**  
-   The public dataset is built using data obtained via [yfinance](https://pypi.org/project/yfinance/). Download the data and unpack it into the `data/` directory.
+   This will install packages such as `pandas`, `torch`, `yfinance`, and others essential for DeepAries.
 
-3. **Run `main.py`.**  
-   Select the desired dataset for training and evaluation.
+2. **Data Preparation.**  
+   By default, the project is set up to work with the DJ 30 market. When you run `main.py`, the code will use the provided DJ 30 ticker list to download market data via the yfinance package, store the data locally, and then proceed with the experiments.  
+   If you wish to apply DeepAries to a different market, please prepare a ticker file (e.g., `complete_<market>_tickers.csv`) with the list of tickers for that market. Then, adjust the command-line arguments (such as `--market` and `--data`) in `main.py` accordingly before running the experiment.
+
+3. **Run the Experiment.**  
+   To start training and evaluation with the default settings (DJ 30 market), run:
+   
+       python main.py --market dj30 --data general --is_training 1
+
+   Modify these arguments as needed to select other markets or data types.
 
 4. **Pre-trained Models.**  
-   We provide models trained on the original dataset as well as on open-source data.
+   Pre-trained models on both the original and open-source datasets are provided. You can perform inference directly using these models without retraining if desired.
 
 ## Dataset
 
-### Form
+The dataset is constructed using publicly available data downloaded via the yfinance package. Our dataset is organized in a three-dimensional format with shape (N, F, T), where:
 
-The dataset is constructed using publicly available data from Yahoo Finance (yfinance). Data for various markets is downloaded, and stocks are grouped by prediction dates to form the training, validation, and test sets. Each data sample is of shape **(N, F)**, where:
+- **N:** The number of stocks in the market.
+- **F:** The number of features per stock (e.g., open, close, volume, etc.).
+- **T:** The time window (i.e., a series of time steps representing historical data).
 
-- **N** - The number of stocks. This can include stocks from any market (e.g., DJ 30, FTSE 100, KOSPI, CSI 300, etc.).
-- **F** - The number of features per stock. In our paper, we obtain features from yfinance and apply normalization for consistency and robustness.
-
-You can inspect the data format using the following code snippet:
-```python
-import pickle
-
-with open('data/original/sample_dl_train.pkl', 'rb') as f:
-    dl_train = pickle.load(f)
-    print(dl_train.data)  # A pandas DataFrame containing datetime, instrument, and feature columns
-```
+Data preprocessing includes normalization and label generation, ensuring that the data is robust and consistent for both forecasting and reinforcement learning experiments.
 
 ## Contributors
 
