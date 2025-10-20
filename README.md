@@ -75,7 +75,7 @@ Data preprocessing includes normalization and label generation, ensuring that th
 	</tr>
    <tr>
 		<td>Donghee Choi*</td>		
-		<td>Department of Metabolism, Digestion and Reproduction,<br>Imperial College London, London, United Kingdom</td>
+		<td>School of Computer Science and Engineering, <br>Pusan National University, Busan, South Korea</td>
 		<td>donghee.choi@imperial.ac.uk</td>
 	</tr>
 	<tr>
