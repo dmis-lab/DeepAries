@@ -230,7 +230,7 @@ python main.py --market dj30 --data general --is_training 1 \
 		<td>gimmogan@hufs.ac.kr</td>
 	</tr>
    <tr>
-		<td>Donghee Choi*</td>		
+		<td><a href="https://sites.google.com/view/pnu-clink" target="_blank">Donghee Choi*</a></td>
 		<td>School of Computer Science and Engineering, <br>Pusan National University, Busan, South Korea</td>
 		<td>dchoi@pusan.ac.kr</td>
 	</tr>
