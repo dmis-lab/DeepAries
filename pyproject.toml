@@ -1,0 +1,27 @@
+[project]
+name = "DeepAries"
+version = "0.1.0"
+description = "Transformer-based portfolio management with reinforcement learning"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    # PyTorch is not included here. Install separately:
+    # CPU: uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    # GPU: uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    # Or use: python install_torch.py
+    "numpy==1.26.4",
+    "pandas==2.2.3",
+    "yfinance==0.2.66",
+    "scipy==1.16.2",
+    "matplotlib==3.10.1",
+    "timm==1.0.20",
+    "einops==0.8.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
+

@@ -270,7 +270,9 @@ class Exp_DeepAries(Exp_Basic):
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
         best_path = os.path.join(path, 'checkpoint.pth')
-        self.model.load_state_dict(torch.load(best_path))
+        # Load checkpoint with device mapping (CPU-compatible)
+        checkpoint = torch.load(best_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint)
         self.logger.info("Training completed, best model loaded.")
 
     def vali(self):
@@ -337,8 +339,36 @@ class Exp_DeepAries(Exp_Basic):
     def backtest(self, setting, load=False):
         if load:
             best_path = os.path.join(self.args.checkpoints, setting, 'checkpoint.pth')
-            self.model.load_state_dict(torch.load(best_path))
-            self.logger.info(f"Loaded best model from {best_path}")
+            
+            # Check if checkpoint file exists
+            if not os.path.exists(best_path):
+                error_msg = (
+                    f"Checkpoint file not found: {best_path}\n"
+                    f"Please ensure:\n"
+                    f"  1. The checkpoint directory '{setting}' exists in '{self.args.checkpoints}'\n"
+                    f"  2. The checkpoint.pth file exists in that directory\n"
+                    f"  3. Or specify the correct checkpoint directory using --checkpoint_dir argument"
+                )
+                self.logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+            
+            try:
+                # Load checkpoint with device mapping (CPU-compatible)
+                # If trained on GPU, automatically maps to current device (CPU or GPU)
+                checkpoint = torch.load(best_path, map_location=self.device)
+                self.model.load_state_dict(checkpoint)
+                self.logger.info(f"Successfully loaded checkpoint from {best_path} on device: {self.device}")
+            except Exception as e:
+                error_msg = (
+                    f"Failed to load checkpoint from {best_path}\n"
+                    f"Error: {str(e)}\n"
+                    f"This might be due to:\n"
+                    f"  1. Model architecture mismatch (check enc_in, dec_in, d_model, etc.)\n"
+                    f"  2. Corrupted checkpoint file\n"
+                    f"  3. Incompatible PyTorch version"
+                )
+                self.logger.error(error_msg)
+                raise RuntimeError(error_msg) from e
 
         backtest_dataset, _ = self._get_data('backtest')
         n_data = len(backtest_dataset)

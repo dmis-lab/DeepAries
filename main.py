@@ -42,6 +42,8 @@ def main():
                         help='CSV filename of the dataset. Defaults to "<market>_data.csv" if not provided')
     parser.add_argument('--checkpoints', type=str, default='./checkpoints/',
                         help='Directory to save model checkpoints')
+    parser.add_argument('--checkpoint_dir', type=str, default=None,
+                        help='Checkpoint directory name for loading pre-trained model. If not specified, will auto-search for matching checkpoint.')
 
     # [Forecasting Task Settings]
     parser.add_argument('--valid_year', type=str, default='2020-12-31',
@@ -56,8 +58,8 @@ def main():
                         help='Prediction sequence length')
     parser.add_argument('--freq', type=str, default='d',
                         help='Frequency for time feature encoding (e.g., s, t, h, d, b, w, m)')
-    parser.add_argument('--horizons', nargs='+', type=int, default=[1, 5, 10],
-                        help='List of forecasting horizons for multi-horizon trading (e.g., 1 5 10)')
+    parser.add_argument('--horizons', nargs='+', type=int, default=[1, 5, 20],
+                        help='List of forecasting horizons for multi-horizon trading (e.g., 1 5 20)')
 
     # [Model Architecture Settings]
     parser.add_argument('--enc_in', type=int, help='Encoder input size (auto-detected from data)', required=False)
@@ -215,11 +217,53 @@ def main():
         exp = Exp_DeepAries(args, unique_setting)
         exp.train(unique_setting)
         logger.info(f"DeepAries Backtesting: {setting}")
-        exp.backtest(unique_setting)
+        # After training, model is already loaded in memory, no need to load from checkpoint
+        exp.backtest(unique_setting, load=False)
     else:
+        # --- Checkpoint loading for inference ---
+        checkpoint_setting = None
+        if args.checkpoint_dir:
+            # Use specified checkpoint directory
+            checkpoint_setting = args.checkpoint_dir
+            logger.info(f"Using specified checkpoint directory: {checkpoint_setting}")
+        else:
+            # Auto-search for matching checkpoint
+            import glob
+            # First, try to find pretrained model (preferred)
+            pretrained_pattern = os.path.join(args.checkpoints, f"{setting}_pretrained")
+            if os.path.exists(pretrained_pattern):
+                checkpoint_setting = os.path.basename(pretrained_pattern)
+                logger.info(f"Auto-found pretrained checkpoint: {checkpoint_setting}")
+            else:
+                # Then try to find any matching checkpoint (training outputs)
+                checkpoint_pattern = os.path.join(args.checkpoints, f"{setting}_*")
+                matching_dirs = glob.glob(checkpoint_pattern)
+                if matching_dirs:
+                    # Use the most recent matching checkpoint
+                    checkpoint_setting = os.path.basename(matching_dirs[0])
+                    logger.info(f"Auto-found checkpoint directory: {checkpoint_setting}")
+                else:
+                    # Default: try to find dj30 iTransformer pretrained checkpoint
+                    default_pattern = os.path.join(args.checkpoints, "iTransformer_DeepAries_dj30_*_pretrained")
+                    default_dirs = glob.glob(default_pattern)
+                    if default_dirs:
+                        checkpoint_setting = os.path.basename(default_dirs[0])
+                        logger.info(f"Using default pretrained checkpoint: {checkpoint_setting}")
+                    else:
+                        # Fallback: try any iTransformer_DeepAries_dj30 checkpoint
+                        fallback_pattern = os.path.join(args.checkpoints, "iTransformer_DeepAries_dj30_*")
+                        fallback_dirs = glob.glob(fallback_pattern)
+                        if fallback_dirs:
+                            checkpoint_setting = os.path.basename(fallback_dirs[0])
+                            logger.info(f"Using fallback checkpoint: {checkpoint_setting}")
+                        else:
+                            logger.warning(f"No matching checkpoint found for setting: {setting}")
+                            logger.warning(f"Please specify --checkpoint_dir or ensure checkpoint exists")
+                            checkpoint_setting = unique_setting  # Fallback to new setting (will fail with clear error)
+        
         exp = Exp_DeepAries(args, unique_setting)
         logger.info(f"DeepAries Backtesting: {setting}")
-        exp.backtest(unique_setting, 1)
+        exp.backtest(checkpoint_setting, 1)  # Pass checkpoint_setting instead of unique_setting
 
     torch.cuda.empty_cache()
 
