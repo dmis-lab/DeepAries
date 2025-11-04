@@ -48,6 +48,9 @@ wheels/
 # Checkpoints and results
 checkpoints/
 results/
+# Exception: Pretrained models should be included
+!checkpoints/*_pretrained/
+!checkpoints/*_pretrained/**
 
 # Logs
 *.log
