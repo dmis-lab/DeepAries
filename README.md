@@ -3,6 +3,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2510.14985-b31b1b.svg)](https://arxiv.org/abs/2510.14985)
 [![Conference](https://img.shields.io/badge/CIKM%202025-Applied%20Research%20Track-blue)](https://www.cikm2025.org)
 
+* [CIKM Paper](https://dl.acm.org/doi/10.1145/3746252.3761572)
 
 ![teaser](./assets/teaser.png)
 
